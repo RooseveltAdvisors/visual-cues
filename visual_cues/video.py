@@ -95,26 +95,28 @@ def get_video_metadata(video_path: Union[str, Path]) -> VideoMetadata:
         return VideoMetadata(duration_s=0.0, fps=30.0, width=640, height=480, total_frames=0)
 
 
-def sample_frames(
+def iter_frames(
     video_path: Union[str, Path],
     sample_fps: float = 2.0,
     max_duration_s: Optional[float] = None,
-) -> List[VideoFrame]:
-    """Sample video frames at a fixed rate (e.g. 2 frames per second).
+) -> Generator[VideoFrame, None, None]:
+    """Yield sampled video frames one at a time at a fixed rate (default 2.0 fps).
+
+    This streaming generator decodes frames lazily with O(1) memory overhead,
+    preventing high memory consumption on long video recordings.
 
     Args:
         video_path: Path to video file.
         sample_fps: Rate at which to sample frames (default: 2.0 frames/sec).
         max_duration_s: Optional cap on video duration to process.
 
-    Returns:
-        List of VideoFrame objects with timestamps and RGB numpy arrays.
+    Yields:
+        VideoFrame objects with timestamps and RGB numpy arrays.
     """
     p = Path(video_path).expanduser()
     if not p.exists():
         raise FileNotFoundError(f"Video file not found: {p}")
 
-    frames: List[VideoFrame] = []
     interval_s = 1.0 / max(sample_fps, 0.1)
 
     if av is not None:
@@ -129,23 +131,21 @@ def sample_frames(
                     for av_frame in packet.decode():
                         pts_s = float(av_frame.pts * av_frame.time_base) if av_frame.pts is not None else frame_idx / 30.0
                         if max_duration_s and pts_s > max_duration_s:
-                            return frames
+                            return
 
                         if pts_s - last_sampled_t >= interval_s * 0.95:
                             img = av_frame.to_rgb().to_ndarray()
-                            frames.append(
-                                VideoFrame(
-                                    timestamp_s=round(pts_s, 3),
-                                    frame_index=frame_idx,
-                                    image=img,
-                                    width=av_frame.width,
-                                    height=av_frame.height,
-                                )
+                            yield VideoFrame(
+                                timestamp_s=round(pts_s, 3),
+                                frame_index=frame_idx,
+                                image=img,
+                                width=av_frame.width,
+                                height=av_frame.height,
                             )
                             last_sampled_t = pts_s
 
                         frame_idx += 1
-            return frames
+            return
         except Exception as e:
             logger.debug(f"PyAV sampling failed: {e}; falling back to ffmpeg.")
 
@@ -166,23 +166,45 @@ def sample_frames(
     proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
     t = 0.0
     idx = 0
-    while True:
-        raw = proc.stdout.read(frame_bytes)
-        if not raw or len(raw) < frame_bytes:
-            break
-        img = np.frombuffer(raw, dtype=np.uint8).reshape((h, w, 3))
-        frames.append(
-            VideoFrame(
+    try:
+        while True:
+            raw = proc.stdout.read(frame_bytes)
+            if not raw or len(raw) < frame_bytes:
+                break
+            img = np.frombuffer(raw, dtype=np.uint8).reshape((h, w, 3))
+            yield VideoFrame(
                 timestamp_s=round(t, 3),
                 frame_index=idx,
                 image=img,
                 width=w,
                 height=h,
             )
-        )
-        t += interval_s
-        idx += 1
-        if max_duration_s and t > max_duration_s:
-            break
-    proc.wait()
-    return frames
+            t += interval_s
+            idx += 1
+            if max_duration_s and t > max_duration_s:
+                break
+    finally:
+        if proc.poll() is None:
+            proc.kill()
+        proc.wait()
+
+
+def sample_frames(
+    video_path: Union[str, Path],
+    sample_fps: float = 2.0,
+    max_duration_s: Optional[float] = None,
+) -> List[VideoFrame]:
+    """Sample video frames into a list at a fixed rate (default 2.0 fps).
+
+    Note: For long recordings (>5 minutes), prefer iter_frames() or analyze_video() to avoid
+    high memory accumulation.
+
+    Args:
+        video_path: Path to video file.
+        sample_fps: Rate at which to sample frames (default: 2.0 frames/sec).
+        max_duration_s: Optional cap on video duration to process.
+
+    Returns:
+        List of VideoFrame objects with timestamps and RGB numpy arrays.
+    """
+    return list(iter_frames(video_path, sample_fps=sample_fps, max_duration_s=max_duration_s))

@@ -9,7 +9,7 @@ from visual_cues.pipeline import (
     VisualCuesResult,
 )
 from visual_cues.pose import BodyPoseAnalyzer, PoseCues
-from visual_cues.video import VideoFrame, VideoMetadata, get_video_metadata, sample_frames
+from visual_cues.video import VideoFrame, VideoMetadata, get_video_metadata, iter_frames, sample_frames
 
 __version__ = "0.1.0"
 __all__ = [
@@ -26,5 +26,6 @@ __all__ = [
     "VideoFrame",
     "VideoMetadata",
     "get_video_metadata",
+    "iter_frames",
     "sample_frames",
 ]

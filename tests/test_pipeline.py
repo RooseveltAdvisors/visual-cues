@@ -44,3 +44,20 @@ def test_pipeline_turn_aggregation():
     assert "turn_summaries" in json_dict
     assert len(json_dict["turn_summaries"]) == 2
     assert "timeline" in json_dict
+
+
+def test_pipeline_streaming_generator():
+    """Verify that process_frames accepts an arbitrary generator/iterator with O(1) storage."""
+    pipeline = VisualCuesPipeline()
+
+    def frame_gen():
+        for idx, t in enumerate([1.0, 2.0, 3.0]):
+            img = np.zeros((100, 100, 3), dtype=np.uint8)
+            yield VideoFrame(timestamp_s=t, frame_index=idx, image=img, width=100, height=100)
+
+    res = pipeline.process_frames(frame_gen(), video_path="streaming_mock.mp4")
+    assert isinstance(res, VisualCuesResult)
+    assert len(res.timeline) == 3
+    assert res.duration_s == 3.0
+    assert res.total_frames_analyzed == 3
+

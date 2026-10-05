@@ -6,14 +6,14 @@ import json
 import logging
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple, Union
+from typing import Any, Dict, Iterable, List, Optional, Tuple, Union
 
 import numpy as np
 
 from visual_cues.face import FaceAnalyzer, FaceCues
 from visual_cues.gaze import GazeCues, HeadGazeAnalyzer
 from visual_cues.pose import BodyPoseAnalyzer, PoseCues
-from visual_cues.video import VideoFrame, get_video_metadata, sample_frames
+from visual_cues.video import VideoFrame, get_video_metadata, iter_frames, sample_frames
 
 logger = logging.getLogger(__name__)
 
@@ -116,11 +116,11 @@ class VisualCuesPipeline:
 
     def process_frames(
         self,
-        frames: List[VideoFrame],
+        frames: Iterable[VideoFrame],
         video_path: str = "video",
         turn_intervals: Optional[List[Tuple[float, float]]] = None,
     ) -> VisualCuesResult:
-        """Run visual cues analysis over a pre-sampled list of video frames."""
+        """Run visual cues analysis over a stream or pre-sampled list of video frames."""
         timeline: List[FrameVisualCues] = []
 
         for vf in frames:
@@ -137,8 +137,10 @@ class VisualCuesPipeline:
                     gaze=gaze_cues,
                 )
             )
+            if len(timeline) % 500 == 0:
+                logger.info(f"Processed {len(timeline)} frames (video time: {vf.timestamp_s:.1f}s)...")
 
-        duration = max([f.timestamp_s for f in frames], default=0.0)
+        duration = timeline[-1].timestamp_s if timeline else 0.0
 
         # Compute turn-aligned summaries if intervals provided
         turn_summaries: List[TurnVisualSummary] = []
@@ -227,9 +229,8 @@ class VisualCuesPipeline:
         turn_intervals: Optional[List[Tuple[float, float]]] = None,
         max_duration_s: Optional[float] = None,
     ) -> VisualCuesResult:
-        """Sample video and execute complete visual cues analysis."""
+        """Stream video frames and execute complete visual cues analysis with O(1) memory overhead."""
         p = Path(video_path).expanduser()
-        logger.info(f"Sampling video frames at {sample_fps} FPS: {p}")
-        frames = sample_frames(p, sample_fps=sample_fps, max_duration_s=max_duration_s)
-        logger.info(f"Sampled {len(frames)} frames; running visual cue analyzers...")
+        logger.info(f"Streaming video frames at {sample_fps} FPS: {p}")
+        frames = iter_frames(p, sample_fps=sample_fps, max_duration_s=max_duration_s)
         return self.process_frames(frames, video_path=str(p), turn_intervals=turn_intervals)
